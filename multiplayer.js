@@ -39,7 +39,9 @@
     rankings: [],
     lastSync: 0,
     raceStartTimer: null,
+    raceStartAt: 0,
     connected: false,
+    waitingRanking: false,
   };
 
   function partyHost() {
@@ -138,6 +140,7 @@
   function renderGoalRanking(rankings) {
     if (!rankings || rankings.length === 0) return;
     mp.rankings = rankings;
+    mp.waitingRanking = false;
     const sorted = [...rankings].sort((a, b) => a.rank - b.rank);
     const mine = sorted.find((e) => e.id === mp.myId);
 
@@ -165,27 +168,33 @@
     goalBannerEl?.classList.remove("hidden");
   }
 
-  function buildProvisionalRanking(localTime) {
-    const entries = [
-      {
-        id: mp.myId || "me",
-        name: mp.name,
-        color: mp.color,
-        goalTime: localTime,
-      },
-    ];
-    for (const [id, r] of mp.remotes) {
-      if (r.finished && r.goalTime != null) {
-        entries.push({
-          id,
-          name: r.name,
-          color: r.color,
-          goalTime: r.goalTime,
-        });
-      }
+  function showGoalPending() {
+    mp.waitingRanking = true;
+    if (goalTimeEl) goalTimeEl.textContent = "—";
+    if (goalRankingListEl) {
+      goalRankingListEl.innerHTML =
+        '<li class="goal-rank-pending">順位を集計中…（他のプレイヤーのゴールを待っています）</li>';
     }
-    entries.sort((a, b) => a.goalTime - b.goalTime);
-    return entries.map((e, i) => ({ ...e, rank: i + 1 }));
+    goalRankingWrapEl?.classList.remove("hidden");
+    goalBannerEl?.classList.remove("hidden");
+  }
+
+  function getRaceGaps(myX) {
+    if (mp.mode !== "online" || mp.remotes.size === 0) return [];
+    const ppm = window.MojiGame?.PIXELS_PER_METER ?? 50;
+    const gaps = [];
+    for (const [, r] of mp.remotes) {
+      const rx =
+        window.MojiGame?.getRemoteWorldX?.(r.id) ?? r.target?.x ?? 0;
+      const meters = Math.round((rx - myX) / ppm);
+      gaps.push({
+        name: r.name || "???",
+        color: r.color,
+        meters,
+      });
+    }
+    gaps.sort((a, b) => b.meters - a.meters);
+    return gaps;
   }
 
   function setLobbyStatus(msg, isError) {
@@ -261,10 +270,7 @@
     r.target.vx = data.vx ?? r.target.vx;
     r.target.vy = data.vy ?? r.target.vy;
     r.target.av = data.av ?? r.target.av;
-    if (data.finished && data.goalTime != null) {
-      r.finished = true;
-      r.goalTime = data.goalTime;
-    }
+    if (data.finished) r.finished = true;
 
     pushRemoteToPhysics(id, {
       name: r.name,
@@ -371,12 +377,20 @@
       }
       if (msg.type === "race_start") {
         mp.rankings = [];
+        mp.raceStartAt = msg.startAt;
         hideGoalRanking();
         scheduleRaceStart(msg.startAt);
         return;
       }
       if (msg.type === "ranking") {
         renderGoalRanking(msg.rankings);
+        for (const entry of msg.rankings) {
+          const r = mp.remotes.get(entry.id);
+          if (r) {
+            r.finished = true;
+            r.goalTime = entry.goalTime;
+          }
+        }
       }
     });
 
@@ -408,6 +422,7 @@
   }
 
   function scheduleRaceStart(startAt) {
+    mp.raceStartAt = startAt;
     hideLobby();
     hideGoalRanking();
     const delay = Math.max(0, startAt - Date.now());
@@ -452,6 +467,7 @@
     mp.ws = null;
     mp.remotes.clear();
     mp.rankings = [];
+    mp.raceStartAt = Date.now();
     hideGoalRanking();
     window.MojiGame?.clearRemotePlayers?.();
     window.MojiGame?.setPlayerColor?.(mp.color);
@@ -483,9 +499,7 @@
       vy: b.velocity.y,
       av: b.angularVelocity,
       finished: st.finished,
-      goalTime: st.finished && st.startTime
-        ? (performance.now() - st.startTime) / 1000
-        : null,
+      goalTime: null,
       color: mp.color,
     };
   }
@@ -512,13 +526,22 @@
           type: "goal",
           name: mp.name,
           color: mp.color,
-          goalTime: elapsed,
         })
       );
       mp.lastSync = 0;
       tick();
+      showGoalPending();
+      return;
     }
-    renderGoalRanking(buildProvisionalRanking(elapsed));
+    renderGoalRanking([
+      {
+        id: "solo",
+        name: mp.name,
+        color: mp.color,
+        goalTime: elapsed,
+        rank: 1,
+      },
+    ]);
   }
 
   function onGameStart() {
@@ -582,6 +605,8 @@
     onGoal,
     onGameStart,
     hideGoalRanking,
+    getRaceGaps,
+    getRaceStartAt: () => mp.raceStartAt || Date.now(),
     PLAYER_COLORS,
     getPlayerColor: () => mp.color,
     get mode() {

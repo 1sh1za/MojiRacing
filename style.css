@@ -488,6 +488,64 @@ button:active {
   margin: 0;
 }
 
+.race-gaps {
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  border-radius: 10px;
+}
+
+.race-gaps.hidden {
+  display: none;
+}
+
+.race-gap-row {
+  display: grid;
+  grid-template-columns: 12px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 12px;
+}
+
+.race-gap-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.9);
+}
+
+.race-gap-name {
+  font-weight: 700;
+  color: #1e3c72;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.race-gap-dist {
+  font-weight: 800;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  white-space: nowrap;
+}
+
+.race-gap-dist.ahead {
+  color: #dc2626;
+}
+
+.race-gap-dist.behind {
+  color: #059669;
+}
+
+.goal-rank-pending {
+  list-style: none;
+  padding: 10px 8px;
+  font-size: 13px;
+  color: #64748b;
+  text-align: center;
+}
+
 @keyframes fadeIn {
   from {
     opacity: 0;

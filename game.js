@@ -43,7 +43,7 @@ const GOAL_X = 135000;
 const PIXELS_PER_METER = 50;       // 距離表示用のスケール
 
 /** 1 より大きいほどカメラが引く（見えるワールド範囲が縦横ともにこの倍率で広がる） */
-const VIEW_ZOOM = 1.2;
+const VIEW_ZOOM = 1.44;
 
 /* --------------------------------------------------------------------------
  * 地形セクター
@@ -732,6 +732,17 @@ function drawRemotePlayers() {
   }
 }
 
+function getRemoteWorldX(id) {
+  const remote = remotePlayers.get(id);
+  if (!remote) return 0;
+  return remote.body ? remote.body.position.x : remote.target.x;
+}
+
+function getElapsedRaceTime() {
+  if (!state.startTime) return 0;
+  return Math.max(0, (Date.now() - state.startTime) / 1000);
+}
+
 function getMinimapPlayers() {
   const players = [];
   if (state.vehicle) {
@@ -974,6 +985,7 @@ function setPlayerColor(color) {
 }
 
 const speedEl = document.getElementById("speed");
+const raceGapsEl = document.getElementById("raceGaps");
 const statusEl = document.getElementById("status");
 const goalBanner = document.getElementById("goalBanner");
 const goalTimeEl = document.getElementById("goalTime");
@@ -1997,7 +2009,7 @@ function startGame() {
   camera.x = START_X;
   camera.y = START_Y;
 
-  state.startTime = performance.now();
+  state.startTime = window.MojiMP?.getRaceStartAt?.() ?? Date.now();
   state.finished = false;
   state.lastJump = 0;
 
@@ -2016,8 +2028,7 @@ function checkGoal() {
   if (!state.vehicle || state.finished) return;
   if (state.vehicle.body.position.x >= GOAL_X) {
     state.finished = true;
-    const elapsed = (performance.now() - state.startTime) / 1000;
-    window.MojiMP?.onGoal?.(elapsed);
+    window.MojiMP?.onGoal?.(getElapsedRaceTime());
   }
   // 落下リカバリー: y がワールド外まで落ちたら自動リセット
   if (state.vehicle.body.position.y > 2000) {
@@ -2092,12 +2103,44 @@ function updateTerrainHUD() {
   if (terrainHintEl) terrainHintEl.textContent = affinityHint(sector.type, score);
 }
 
+function escapeHtmlText(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function updateRaceGaps() {
+  if (!raceGapsEl || !state.vehicle) return;
+  const gaps = window.MojiMP?.getRaceGaps?.(state.vehicle.body.position.x);
+  if (!gaps || gaps.length === 0) {
+    raceGapsEl.classList.add("hidden");
+    raceGapsEl.innerHTML = "";
+    return;
+  }
+  raceGapsEl.classList.remove("hidden");
+  raceGapsEl.innerHTML = gaps
+    .map((g) => {
+      const ahead = g.meters > 0;
+      const label = ahead
+        ? `${Math.abs(g.meters)}m 先`
+        : `${Math.abs(g.meters)}m 後`;
+      return `<div class="race-gap-row">
+        <span class="race-gap-dot" style="background:${escapeHtmlText(g.color)}"></span>
+        <span class="race-gap-name">${escapeHtmlText(g.name)}</span>
+        <span class="race-gap-dist ${ahead ? "ahead" : "behind"}">${label}</span>
+      </div>`;
+    })
+    .join("");
+}
+
 function updateHUD() {
   const v = state.vehicle;
   if (!v) return;
   const sp = Math.hypot(v.body.velocity.x, v.body.velocity.y) / PIXELS_PER_METER;
   if (speedEl) speedEl.textContent = sp.toFixed(1);
   updateTerrainHUD();
+  updateRaceGaps();
 }
 
 /* --------------------------------------------------------------------------
@@ -2151,6 +2194,8 @@ window.MojiGame = {
   removeRemotePlayer,
   clearRemotePlayers,
   getMinimapPlayers,
+  getRemoteWorldX,
+  getElapsedRaceTime,
   updateLobbyPreview,
 };
 

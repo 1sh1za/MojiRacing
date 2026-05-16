@@ -28,7 +28,7 @@ type ClientMessage =
   | PlayerPayload
   | { type: "ready"; name: string; color: string }
   | { type: "request_start" }
-  | { type: "goal"; name: string; color: string; goalTime: number };
+  | { type: "goal"; name: string; color: string };
 
 type ServerMessage =
   | { type: "welcome"; id: string; room: string }
@@ -44,6 +44,7 @@ export default class RoomServer implements Party.Server {
   raceScheduled = false;
   finishedIds = new Set<string>();
   rankings: GoalEntry[] = [];
+  raceStartAt = 0;
 
   constructor(readonly room: Party.Room) {}
 
@@ -51,6 +52,7 @@ export default class RoomServer implements Party.Server {
     this.raceScheduled = false;
     this.finishedIds.clear();
     this.rankings = [];
+    this.raceStartAt = 0;
   }
 
   onConnect(conn: Party.Connection) {
@@ -107,6 +109,7 @@ export default class RoomServer implements Party.Server {
       this.resetRace();
       this.raceScheduled = true;
       const startAt = Date.now() + 3000;
+      this.raceStartAt = startAt;
       this.room.broadcast(
         JSON.stringify({ type: "race_start", startAt } satisfies ServerMessage)
       );
@@ -115,20 +118,27 @@ export default class RoomServer implements Party.Server {
 
     if (msg.type === "goal") {
       if (this.finishedIds.has(sender.id)) return;
+      if (this.raceStartAt <= 0) return;
       this.finishedIds.add(sender.id);
+      const goalTime = Math.max(0, (Date.now() - this.raceStartAt) / 1000);
       const rank = this.rankings.length + 1;
       const entry: GoalEntry = {
         id: sender.id,
         name: msg.name,
         color: msg.color,
-        goalTime: msg.goalTime,
+        goalTime,
         rank,
       };
       this.rankings.push(entry);
+      const stub = this.players.get(sender.id);
+      if (stub) {
+        stub.finished = true;
+        stub.goalTime = goalTime;
+      }
       this.room.broadcast(
         JSON.stringify({
           type: "ranking",
-          rankings: this.rankings,
+          rankings: [...this.rankings],
         } satisfies ServerMessage)
       );
       return;
