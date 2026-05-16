@@ -490,6 +490,14 @@ function makeBodyOpts() {
   };
 }
 
+function makeRemoteBodyOpts() {
+  return {
+    ...makeBodyOpts(),
+    label: "remote-character",
+    frictionAir: 0.008,
+  };
+}
+
 function createVehicle(x, y, charShape) {
   const body = createCharacterBody(
     x,
@@ -531,6 +539,221 @@ function swapShape(newShape) {
   Composite.add(world, newBody);
   v.body = newBody;
   return true;
+}
+
+/* --------------------------------------------------------------------------
+ * マルチプレイ: 他プレイヤー剛体（ローカル物理世界に参加・衝突あり）
+ * -------------------------------------------------------------------------- */
+
+const remotePlayers = new Map();
+
+function swapRemoteBody(remote, newShape) {
+  const old = remote.body;
+  if (!old) return false;
+  const newBody = createCharacterBody(
+    old.position.x,
+    old.position.y,
+    newShape.contours,
+    makeRemoteBodyOpts()
+  );
+  if (!newBody) return false;
+  Body.setAngle(newBody, old.angle);
+  Body.setVelocity(newBody, { x: old.velocity.x, y: old.velocity.y });
+  Body.setAngularVelocity(newBody, old.angularVelocity);
+  Composite.remove(world, old);
+  Composite.add(world, newBody);
+  remote.body = newBody;
+  remote.shape = newShape;
+  return true;
+}
+
+function applyTargetToBody(body, target, blend) {
+  Body.setPosition(body, {
+    x: lerp(body.position.x, target.x, blend),
+    y: lerp(body.position.y, target.y, blend),
+  });
+  let da = target.angle - body.angle;
+  while (da > Math.PI) da -= Math.PI * 2;
+  while (da < -Math.PI) da += Math.PI * 2;
+  Body.setAngle(body, body.angle + da * blend);
+  Body.setVelocity(body, {
+    x: lerp(body.velocity.x, target.vx, blend),
+    y: lerp(body.velocity.y, target.vy, blend),
+  });
+  Body.setAngularVelocity(
+    body,
+    lerp(body.angularVelocity, target.av, blend)
+  );
+}
+
+function ensureRemotePlayer(id, data) {
+  const char = data.char || "あ";
+  let remote = remotePlayers.get(id);
+  if (!remote) {
+    remote = {
+      id,
+      name: data.name || "???",
+      color: data.color || "#e11d48",
+      charText: char,
+      shape: null,
+      body: null,
+      target: {
+        x: data.x ?? START_X,
+        y: data.y ?? START_Y,
+        angle: data.angle ?? 0,
+        vx: data.vx ?? 0,
+        vy: data.vy ?? 0,
+        av: data.av ?? 0,
+      },
+    };
+    remotePlayers.set(id, remote);
+  }
+
+  remote.name = data.name || remote.name;
+  remote.color = data.color || remote.color;
+  remote.target.x = data.x ?? remote.target.x;
+  remote.target.y = data.y ?? remote.target.y;
+  remote.target.angle = data.angle ?? remote.target.angle;
+  remote.target.vx = data.vx ?? remote.target.vx;
+  remote.target.vy = data.vy ?? remote.target.vy;
+  remote.target.av = data.av ?? remote.target.av;
+
+  if (!state.vehicle) return remote;
+
+  if (remote.charText !== char) {
+    const newShape = getCharacterShape(char);
+    if (newShape) {
+      newShape.charText = char;
+      if (remote.body) {
+        swapRemoteBody(remote, newShape);
+      } else {
+        remote.shape = newShape;
+      }
+      remote.charText = char;
+    }
+  }
+
+  if (!remote.shape) {
+    const shape = getCharacterShape(char);
+    if (!shape) return remote;
+    shape.charText = char;
+    remote.shape = shape;
+    remote.charText = char;
+  }
+
+  if (!remote.body) {
+    const t = remote.target;
+    let sx = t.x;
+    let sy = t.y;
+    if (sx < 200) {
+      let h = 0;
+      for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+      sx = START_X + (h % 100);
+      sy = START_Y;
+      t.x = sx;
+      t.y = sy;
+    }
+    const body = createCharacterBody(
+      sx,
+      sy,
+      remote.shape.contours,
+      makeRemoteBodyOpts()
+    );
+    if (!body) return remote;
+    Body.setAngle(body, t.angle);
+    Body.setVelocity(body, { x: t.vx, y: t.vy });
+    Body.setAngularVelocity(body, t.av);
+    remote.body = body;
+    World.add(world, body);
+  }
+
+  return remote;
+}
+
+function syncRemotePlayersBeforePhysics(dt) {
+  if (remotePlayers.size === 0) return;
+  const blend = 1 - Math.exp(-dt / 70);
+  for (const remote of remotePlayers.values()) {
+    if (!remote.body) continue;
+    applyTargetToBody(remote.body, remote.target, blend);
+  }
+}
+
+function removeRemotePlayer(id) {
+  const remote = remotePlayers.get(id);
+  if (!remote) return;
+  if (remote.body) Composite.remove(world, remote.body);
+  remotePlayers.delete(id);
+}
+
+function clearRemotePlayers() {
+  for (const remote of remotePlayers.values()) {
+    if (remote.body) Composite.remove(world, remote.body);
+  }
+  remotePlayers.clear();
+}
+
+function drawColoredCharacter(body, shape, color) {
+  ctx.save();
+  ctx.translate(body.position.x, body.position.y);
+  ctx.rotate(body.angle);
+  ctx.fillStyle = color;
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 4;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  for (const contour of shape.contours) {
+    ctx.beginPath();
+    ctx.moveTo(contour[0][0], contour[0][1]);
+    for (let i = 1; i < contour.length; i++) {
+      ctx.lineTo(contour[i][0], contour[i][1]);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawRemotePlayers() {
+  for (const remote of remotePlayers.values()) {
+    if (!remote.body || !remote.shape) continue;
+    drawColoredCharacter(remote.body, remote.shape, remote.color);
+    ctx.save();
+    ctx.font = "bold 12px sans-serif";
+    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    const nx = remote.body.position.x;
+    const ny = remote.body.position.y - remote.shape.size * 0.9;
+    ctx.fillRect(nx - 40, ny, 80, 18);
+    ctx.fillStyle = remote.color;
+    ctx.textAlign = "center";
+    ctx.fillText(remote.name, nx, ny + 14);
+    ctx.restore();
+  }
+}
+
+function getMinimapPlayers() {
+  const players = [];
+  if (state.vehicle) {
+    players.push({
+      x: state.vehicle.body.position.x,
+      name: "あなた",
+      color: "#1e3c72",
+      isLocal: true,
+    });
+  }
+  for (const remote of remotePlayers.values()) {
+    const x = remote.body
+      ? remote.body.position.x
+      : remote.target.x;
+    players.push({
+      x,
+      name: remote.name,
+      color: remote.color,
+      isLocal: false,
+    });
+  }
+  return players;
 }
 
 /* --------------------------------------------------------------------------
@@ -746,6 +969,23 @@ const speedEl = document.getElementById("speed");
 const statusEl = document.getElementById("status");
 const goalBanner = document.getElementById("goalBanner");
 const goalTimeEl = document.getElementById("goalTime");
+const minimapWrapEl = document.getElementById("minimapWrap");
+const minimapEl = document.getElementById("minimap");
+let minimapCtx = null;
+let minimapDpr = 1;
+
+function resizeMinimap() {
+  if (!minimapEl) return;
+  minimapDpr = window.devicePixelRatio || 1;
+  const cssW = minimapEl.clientWidth || 240;
+  const cssH = minimapEl.clientHeight || 56;
+  minimapEl.width = Math.round(cssW * minimapDpr);
+  minimapEl.height = Math.round(cssH * minimapDpr);
+  minimapCtx = minimapEl.getContext("2d");
+  minimapCtx.setTransform(minimapDpr, 0, 0, minimapDpr, 0, 0);
+}
+window.addEventListener("resize", resizeMinimap);
+resizeMinimap();
 
 function lerp(a, b, t) {
   return a + (b - a) * t;
@@ -1073,15 +1313,104 @@ function render() {
   drawStartGoal();
 
   if (state.vehicle) {
+    drawRemotePlayers();
     drawVehicle(state.vehicle);
   }
 
-  if (window.MojiMP?.drawRemotes) {
-    window.MojiMP.drawRemotes(ctx);
+  ctx.restore();
+  ctx.restore();
+
+  drawMinimap();
+}
+
+function drawMinimap() {
+  if (!minimapEl || !minimapCtx || !state.vehicle) {
+    if (minimapWrapEl) minimapWrapEl.classList.add("hidden");
+    return;
+  }
+  if (minimapWrapEl) minimapWrapEl.classList.remove("hidden");
+
+  const w = minimapEl.clientWidth || 240;
+  const h = minimapEl.clientHeight || 56;
+  const padX = 10;
+  const padY = 14;
+  const trackX = padX;
+  const trackY = padY + 8;
+  const trackW = w - padX * 2;
+  const trackH = 10;
+  const courseLen = GOAL_X - START_X;
+
+  minimapCtx.clearRect(0, 0, w, h);
+
+  minimapCtx.fillStyle = "rgba(13, 27, 42, 0.88)";
+  if (typeof minimapCtx.roundRect === "function") {
+    minimapCtx.beginPath();
+    minimapCtx.roundRect(0, 0, w, h, 10);
+    minimapCtx.fill();
+  } else {
+    minimapCtx.fillRect(0, 0, w, h);
   }
 
-  ctx.restore();
-  ctx.restore();
+  // 地形セクター（コース上の色分け）
+  let prevEnd = START_X;
+  for (const sector of SECTOR_PLAN) {
+    const sStart = prevEnd;
+    const sEnd = Math.min(sector.endX, GOAL_X);
+    if (sEnd <= START_X) {
+      prevEnd = sector.endX;
+      continue;
+    }
+    const x0 = trackX + ((sStart - START_X) / courseLen) * trackW;
+    const x1 = trackX + ((sEnd - START_X) / courseLen) * trackW;
+    minimapCtx.fillStyle = SECTOR_INFO[sector.type]?.color || "#6fae45";
+    minimapCtx.fillRect(x0, trackY, Math.max(1, x1 - x0), trackH);
+    prevEnd = sector.endX;
+  }
+
+  minimapCtx.strokeStyle = "rgba(255,255,255,0.35)";
+  minimapCtx.lineWidth = 1;
+  minimapCtx.strokeRect(trackX, trackY, trackW, trackH);
+
+  // スタート / ゴール
+  minimapCtx.fillStyle = "#fff";
+  minimapCtx.font = "bold 9px sans-serif";
+  minimapCtx.textAlign = "left";
+  minimapCtx.fillText("S", trackX - 2, trackY - 2);
+  minimapCtx.textAlign = "right";
+  minimapCtx.fillText("G", trackX + trackW + 2, trackY - 2);
+
+  const players = getMinimapPlayers();
+  for (const p of players) {
+    const px =
+      trackX +
+      Math.max(0, Math.min(1, (p.x - START_X) / courseLen)) * trackW;
+    const py = trackY + trackH / 2;
+    const r = p.isLocal ? 5 : 4;
+    minimapCtx.beginPath();
+    minimapCtx.arc(px, py, r, 0, Math.PI * 2);
+    minimapCtx.fillStyle = p.color;
+    minimapCtx.fill();
+    minimapCtx.strokeStyle = p.isLocal ? "#fff" : "rgba(255,255,255,0.85)";
+    minimapCtx.lineWidth = p.isLocal ? 2 : 1.5;
+    minimapCtx.stroke();
+  }
+
+  // 凡例（プレイヤー名）
+  minimapCtx.font = "10px sans-serif";
+  minimapCtx.textAlign = "left";
+  let legendX = padX;
+  const legendY = h - 6;
+  for (const p of players) {
+    minimapCtx.fillStyle = p.color;
+    minimapCtx.beginPath();
+    minimapCtx.arc(legendX + 4, legendY - 3, 3, 0, Math.PI * 2);
+    minimapCtx.fill();
+    minimapCtx.fillStyle = "rgba(255,255,255,0.9)";
+    const label = p.isLocal ? "あなた" : p.name;
+    minimapCtx.fillText(label, legendX + 10, legendY);
+    legendX += minimapCtx.measureText(label).width + 22;
+    if (legendX > w - 40) break;
+  }
 }
 
 /* --------------------------------------------------------------------------
@@ -1607,6 +1936,7 @@ function setStatus(msg) {
 }
 
 function clearWorld() {
+  clearRemotePlayers();
   World.clear(world, false);
   Engine.clear(engine);
   state.vehicle = null;
@@ -1652,6 +1982,8 @@ function startGame() {
   state.startTime = performance.now();
   state.finished = false;
   state.lastJump = 0;
+
+  window.MojiMP?.onGameStart?.();
 }
 
 function restart() {
@@ -1766,15 +2098,13 @@ function loop(now) {
   if (dt > 100) dt = 100; // タブ復帰時の暴走防止
   acc += dt;
   while (acc >= FIXED_DT) {
+    syncRemotePlayersBeforePhysics(FIXED_DT);
     applyControls();
     applyTerrainEffects();
     Engine.update(engine, FIXED_DT);
     // ひらがなが「車体そのもの」なので、角度ロックや傾き合わせは一切しない。
     // 形状の物理（重心の偏り・凹凸）が、そのまま転がりの個性として現れる。
     acc -= FIXED_DT;
-  }
-  if (window.MojiMP?.interpolateRemotes) {
-    window.MojiMP.interpolateRemotes(dt);
   }
   checkGoal();
   updateHUD();
@@ -1791,12 +2121,17 @@ window.MojiGame = {
   START_X,
   GOAL_X,
   PIXELS_PER_METER,
+  WORLD_WIDTH,
   getCharacterShape,
   drawCharacterRoller,
   isHiragana,
   startGame,
   restart,
   getState: () => state,
+  ensureRemotePlayer,
+  removeRemotePlayer,
+  clearRemotePlayers,
+  getMinimapPlayers,
 };
 
 // 初期表示（ゲーム開始はロビーまたは「ひとりでプレイ」から）

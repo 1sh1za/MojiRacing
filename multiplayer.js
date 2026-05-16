@@ -2,7 +2,7 @@
  * もじレーシング — マルチプレイ（PartyKit WebSocket）
  *
  * 各クライアントはローカルで Matter.js 物理を実行し、
- * 自車の位置・姿勢・文字を約 15Hz で同期。他プレイヤーは補間表示。
+ * 他プレイヤーは剛体としてワールドに参加（衝突あり）。
  */
 (function () {
   const SYNC_INTERVAL_MS = 66;
@@ -22,7 +22,7 @@
   const mpHudEl = document.getElementById("mpHud");
 
   const mp = {
-    mode: "lobby", // lobby | solo | online
+    mode: "lobby",
     ws: null,
     myId: "",
     roomId: "",
@@ -79,8 +79,8 @@
   function updatePlayerList() {
     if (!playerListEl) return;
     const items = [{ id: mp.myId || "me", name: mp.name + " (あなた)", color: mp.color }];
-    for (const [id, r] of mp.remotes) {
-      items.push({ id, name: r.name || "???", color: r.color });
+    for (const [, r] of mp.remotes) {
+      items.push({ id: r.id, name: r.name || "???", color: r.color });
     }
     playerListEl.innerHTML = items
       .map(
@@ -108,25 +108,8 @@
     mpHudEl.textContent = `ルーム ${mp.roomId} · ${n}人`;
   }
 
-  function lerp(a, b, t) {
-    return a + (b - a) * t;
-  }
-
-  function lerpAngle(a, b, t) {
-    let d = b - a;
-    while (d > Math.PI) d -= Math.PI * 2;
-    while (d < -Math.PI) d += Math.PI * 2;
-    return a + d * t;
-  }
-
-  function ensureRemoteShape(remote) {
-    const G = window.MojiGame;
-    if (!G || !remote.char) return;
-    if (remote.char === remote._shapeChar && remote.shape) return;
-    const shape = G.getCharacterShape(remote.char);
-    if (!shape) return;
-    remote.shape = shape;
-    remote._shapeChar = remote.char;
+  function pushRemoteToPhysics(id, data) {
+    window.MojiGame?.ensureRemotePlayer?.(id, data);
   }
 
   function applyRemoteState(id, data) {
@@ -137,37 +120,57 @@
         name: data.name || "???",
         char: data.char || "あ",
         color: data.color || colorFromId(id),
-        shape: null,
-        _shapeChar: "",
-        display: { x: 0, y: 0, angle: 0 },
-        target: { x: 0, y: 0, angle: 0 },
-        finished: false,
-        goalTime: null,
+        target: { x: 0, y: 0, angle: 0, vx: 0, vy: 0, av: 0 },
       };
       mp.remotes.set(id, r);
     }
     r.name = data.name || r.name;
     r.char = data.char || r.char;
     r.color = data.color || r.color;
-    r.finished = !!data.finished;
-    r.goalTime = data.goalTime;
-    r.target.x = data.x;
-    r.target.y = data.y;
-    r.target.angle = data.angle;
-    if (!r.display.x && !r.display.y) {
-      r.display.x = data.x;
-      r.display.y = data.y;
-      r.display.angle = data.angle;
-    }
-    ensureRemoteShape(r);
+    r.target.x = data.x ?? r.target.x;
+    r.target.y = data.y ?? r.target.y;
+    r.target.angle = data.angle ?? r.target.angle;
+    r.target.vx = data.vx ?? r.target.vx;
+    r.target.vy = data.vy ?? r.target.vy;
+    r.target.av = data.av ?? r.target.av;
+
+    pushRemoteToPhysics(id, {
+      name: r.name,
+      char: r.char,
+      color: r.color,
+      x: r.target.x,
+      y: r.target.y,
+      angle: r.target.angle,
+      vx: r.target.vx,
+      vy: r.target.vy,
+      av: r.target.av,
+    });
+
     updatePlayerList();
     updateMpHud();
   }
 
   function removeRemote(id) {
     mp.remotes.delete(id);
+    window.MojiGame?.removeRemotePlayer?.(id);
     updatePlayerList();
     updateMpHud();
+  }
+
+  function hydrateRemotesToWorld() {
+    for (const [id, r] of mp.remotes) {
+      pushRemoteToPhysics(id, {
+        name: r.name,
+        char: r.char,
+        color: r.color,
+        x: r.target.x,
+        y: r.target.y,
+        angle: r.target.angle,
+        vx: r.target.vx,
+        vy: r.target.vy,
+        av: r.target.av,
+      });
+    }
   }
 
   function connectRoom(roomId) {
@@ -186,17 +189,21 @@
     mp.color = REMOTE_COLORS[Math.floor(Math.random() * REMOTE_COLORS.length)];
     mp.mode = "online";
     mp.remotes.clear();
+    window.MojiGame?.clearRemotePlayers?.();
 
     if (roomInputEl) roomInputEl.value = mp.roomId;
     history.replaceState(null, "", `?room=${encodeURIComponent(mp.roomId)}`);
 
-    setLobbyStatus("接続中…");
+    const url = wsUrl(mp.roomId);
+    setLobbyStatus(`接続中… (${url})`);
     if (btnJoin) btnJoin.disabled = true;
 
-    const ws = new WebSocket(wsUrl(mp.roomId));
+    mp.wasConnected = false;
+    const ws = new WebSocket(url);
     mp.ws = ws;
 
     ws.addEventListener("open", () => {
+      mp.wasConnected = true;
       mp.connected = true;
       setLobbyStatus(`ルーム ${mp.roomId} に接続しました`);
       ws.send(JSON.stringify({ type: "ready", name: mp.name, color: mp.color }));
@@ -237,14 +244,27 @@
 
     ws.addEventListener("close", () => {
       mp.connected = false;
-      if (mp.mode === "online") {
-        setLobbyStatus("接続が切れました", true);
-        if (btnJoin) btnJoin.disabled = false;
+      if (mp.mode !== "online") return;
+      if (btnJoin) btnJoin.disabled = false;
+      const host = partyHost();
+      if (!mp.wasConnected) {
+        if (host.includes("localhost")) {
+          setLobbyStatus(
+            "マルチサーバーに接続できません。別ターミナルで npm run dev を実行してから、もう一度「ルームに参加」してください。",
+            true
+          );
+        } else {
+          setLobbyStatus(
+            `マルチサーバー（${host}）に接続できません。PartyKit のデプロイと Vercel の MOJI_PARTY_HOST を確認してください。`,
+            true
+          );
+        }
+      } else {
+        setLobbyStatus("接続が切れました。もう一度「ルームに参加」してください。", true);
       }
     });
 
     ws.addEventListener("error", () => {
-      setLobbyStatus("接続に失敗しました。PartyKit が起動しているか確認してください。", true);
       if (btnJoin) btnJoin.disabled = false;
     });
   }
@@ -291,6 +311,8 @@
     mp.mode = "solo";
     mp.ws?.close();
     mp.ws = null;
+    mp.remotes.clear();
+    window.MojiGame?.clearRemotePlayers?.();
     hideLobby();
     updateMpHud();
     window.MojiGame?.startGame();
@@ -335,68 +357,7 @@
     if (payload) mp.ws.send(JSON.stringify(payload));
   }
 
-  function interpolateRemotes(dt) {
-    const t = Math.min(1, dt / 120);
-    for (const r of mp.remotes.values()) {
-      r.display.x = lerp(r.display.x, r.target.x, t);
-      r.display.y = lerp(r.display.y, r.target.y, t);
-      r.display.angle = lerpAngle(r.display.angle, r.target.angle, t);
-    }
-  }
-
-  function drawRemotes(ctx) {
-    const G = window.MojiGame;
-    if (!G?.drawCharacterRoller) return;
-    for (const r of mp.remotes.values()) {
-      ensureRemoteShape(r);
-      if (!r.shape) continue;
-      const fakeBody = {
-        position: { x: r.display.x, y: r.display.y },
-        angle: r.display.angle,
-      };
-      ctx.save();
-      ctx.globalAlpha = 0.92;
-      drawRemoteRoller(ctx, fakeBody, r);
-      ctx.restore();
-
-      if (r.name) {
-        ctx.save();
-        ctx.font = "bold 12px sans-serif";
-        ctx.fillStyle = "rgba(0,0,0,0.55)";
-        ctx.fillRect(r.display.x - 40, r.display.y - r.shape.size * 0.9, 80, 18);
-        ctx.fillStyle = r.color;
-        ctx.textAlign = "center";
-        ctx.fillText(r.name, r.display.x, r.display.y - r.shape.size * 0.78);
-        ctx.restore();
-      }
-    }
-  }
-
-  /** リモート用: 色付きで同じ形状を描画 */
-  function drawRemoteRoller(ctx, body, remote) {
-    const shape = remote.shape;
-    ctx.save();
-    ctx.translate(body.position.x, body.position.y);
-    ctx.rotate(body.angle);
-    ctx.fillStyle = remote.color;
-    ctx.strokeStyle = "#ffffff";
-    ctx.lineWidth = 4;
-    ctx.lineJoin = "round";
-    ctx.lineCap = "round";
-    for (const contour of shape.contours) {
-      ctx.beginPath();
-      ctx.moveTo(contour[0][0], contour[0][1]);
-      for (let i = 1; i < contour.length; i++) {
-        ctx.lineTo(contour[i][0], contour[i][1]);
-      }
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-    }
-    ctx.restore();
-  }
-
-  function onCharChange(ch) {
+  function onCharChange() {
     if (mp.mode !== "online" || !mp.ws) return;
     mp.lastSync = 0;
     tick();
@@ -406,6 +367,10 @@
     if (mp.mode !== "online" || !mp.ws) return;
     mp.lastSync = 0;
     tick();
+  }
+
+  function onGameStart() {
+    if (mp.mode === "online") hydrateRemotesToWorld();
   }
 
   function copyRoomLink() {
@@ -430,20 +395,27 @@
     btnStartRace?.addEventListener("click", requestRaceStart);
     btnCopyLink?.addEventListener("click", copyRoomLink);
 
-    if (partyHost()) {
-      setLobbyStatus("ルームコードを共有して友達を招待できます");
+    const host = partyHost();
+    if (host.includes("localhost")) {
+      setLobbyStatus(
+        "ローカルマルチ: 先に npm run dev（PartyKit）を起動してから参加してください"
+      );
+    } else if (host) {
+      setLobbyStatus(`マルチサーバー: ${host}`);
     } else {
-      setLobbyStatus("マルチサーバー未設定 — ひとりでプレイ、または PartyKit をセットアップ", false);
+      setLobbyStatus(
+        "インターネットマルチ未設定 — PartyKit をデプロイし Vercel に MOJI_PARTY_HOST を設定してください",
+        false
+      );
     }
     showLobby();
   }
 
   window.MojiMP = {
     tick,
-    interpolateRemotes,
-    drawRemotes,
     onCharChange,
     onGoal,
+    onGameStart,
     get mode() {
       return mp.mode;
     },
