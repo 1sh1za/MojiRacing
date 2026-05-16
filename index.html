@@ -21,6 +21,13 @@
           autocomplete="nickname"
         />
 
+        <label class="label">タイヤの色</label>
+        <div id="colorPicker" class="color-picker" role="radiogroup" aria-label="タイヤの色"></div>
+        <div class="lobby-preview-row">
+          <canvas id="lobbyPreview" width="88" height="88" aria-hidden="true"></canvas>
+          <p class="lobby-preview-hint">選んだ色でコースを転がります</p>
+        </div>
+
         <label class="label" for="roomCode">ルームコード</label>
         <div class="lobby-row">
           <input id="roomCode" type="text" maxlength="8" placeholder="ABC12" autocomplete="off" />
@@ -102,7 +109,11 @@
       <div class="banner-card">
         <div class="banner-emoji">🏁</div>
         <div class="banner-title">ゴール！</div>
-        <div class="banner-time">タイム: <span id="goalTime">0.00</span> 秒</div>
+        <div class="banner-time">あなたのタイム: <span id="goalTime">0.00</span> 秒</div>
+        <div id="goalRankingWrap" class="goal-ranking-wrap hidden">
+          <div class="goal-ranking-title">ランキング</div>
+          <ol id="goalRankingList" class="goal-ranking-list"></ol>
+        </div>
         <button id="bannerRestart">もう一度</button>
       </div>
     </div>

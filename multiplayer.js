@@ -6,9 +6,11 @@
  */
 (function () {
   const SYNC_INTERVAL_MS = 66;
-  const REMOTE_COLORS = [
+  const PLAYER_COLORS = [
     "#e11d48", "#7c3aed", "#0891b2", "#ca8a04", "#059669", "#db2777",
+    "#1e3c72", "#f97316",
   ];
+  const COLOR_STORAGE_KEY = "mojiracing-player-color";
 
   const lobbyEl = document.getElementById("lobby");
   const roomInputEl = document.getElementById("roomCode");
@@ -20,6 +22,11 @@
   const btnStartRace = document.getElementById("btnStartRace");
   const btnCopyLink = document.getElementById("btnCopyLink");
   const mpHudEl = document.getElementById("mpHud");
+  const colorPickerEl = document.getElementById("colorPicker");
+  const goalBannerEl = document.getElementById("goalBanner");
+  const goalTimeEl = document.getElementById("goalTime");
+  const goalRankingWrapEl = document.getElementById("goalRankingWrap");
+  const goalRankingListEl = document.getElementById("goalRankingList");
 
   const mp = {
     mode: "lobby",
@@ -27,8 +34,9 @@
     myId: "",
     roomId: "",
     name: "プレイヤー",
-    color: REMOTE_COLORS[0],
+    color: PLAYER_COLORS[0],
     remotes: new Map(),
+    rankings: [],
     lastSync: 0,
     raceStartTimer: null,
     connected: false,
@@ -59,7 +67,125 @@
   function colorFromId(id) {
     let h = 0;
     for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
-    return REMOTE_COLORS[h % REMOTE_COLORS.length];
+    return PLAYER_COLORS[h % PLAYER_COLORS.length];
+  }
+
+  function applyPlayerColor(color) {
+    mp.color = color;
+    window.MojiGame?.setPlayerColor?.(color);
+    if (colorPickerEl) {
+      for (const btn of colorPickerEl.querySelectorAll(".color-swatch")) {
+        btn.classList.toggle("selected", btn.dataset.color === color);
+        btn.setAttribute(
+          "aria-checked",
+          btn.dataset.color === color ? "true" : "false"
+        );
+      }
+    }
+    try {
+      localStorage.setItem(COLOR_STORAGE_KEY, color);
+    } catch {
+      /* noop */
+    }
+    window.MojiGame?.updateLobbyPreview?.();
+  }
+
+  function loadSavedColor() {
+    try {
+      const saved = localStorage.getItem(COLOR_STORAGE_KEY);
+      if (saved && PLAYER_COLORS.includes(saved)) return saved;
+    } catch {
+      /* noop */
+    }
+    return PLAYER_COLORS[0];
+  }
+
+  function initColorPicker() {
+    if (!colorPickerEl) return;
+    colorPickerEl.innerHTML = "";
+    for (const color of PLAYER_COLORS) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "color-swatch";
+      btn.dataset.color = color;
+      btn.style.background = color;
+      btn.setAttribute("role", "radio");
+      btn.setAttribute("aria-label", `色 ${color}`);
+      btn.addEventListener("click", () => {
+        applyPlayerColor(color);
+        if (mp.connected && mp.ws?.readyState === WebSocket.OPEN) {
+          sendReady();
+        }
+      });
+      colorPickerEl.appendChild(btn);
+    }
+    applyPlayerColor(loadSavedColor());
+  }
+
+  function sendReady() {
+    if (!mp.ws || mp.ws.readyState !== WebSocket.OPEN) return;
+    mp.name = (nameInputEl?.value || "").trim().slice(0, 12) || "プレイヤー";
+    mp.ws.send(JSON.stringify({ type: "ready", name: mp.name, color: mp.color }));
+    updatePlayerList();
+  }
+
+  function hideGoalRanking() {
+    goalRankingWrapEl?.classList.add("hidden");
+    if (goalRankingListEl) goalRankingListEl.innerHTML = "";
+    goalBannerEl?.classList.add("hidden");
+  }
+
+  function renderGoalRanking(rankings) {
+    if (!rankings || rankings.length === 0) return;
+    mp.rankings = rankings;
+    const sorted = [...rankings].sort((a, b) => a.rank - b.rank);
+    const mine = sorted.find((e) => e.id === mp.myId);
+
+    if (goalTimeEl) {
+      goalTimeEl.textContent = mine
+        ? mine.goalTime.toFixed(2)
+        : sorted[0].goalTime.toFixed(2);
+    }
+    if (goalRankingListEl) {
+      goalRankingListEl.innerHTML = sorted
+        .map((entry) => {
+          const medal =
+            entry.rank === 1 ? "🥇" : entry.rank === 2 ? "🥈" : entry.rank === 3 ? "🥉" : "";
+          const you = entry.id === mp.myId ? ' <span class="rank-you">(あなた)</span>' : "";
+          return `<li class="goal-rank-row">
+            <span class="goal-rank-pos">${medal || entry.rank}</span>
+            <span class="goal-rank-dot" style="background:${entry.color}"></span>
+            <span class="goal-rank-name">${escapeHtml(entry.name)}${you}</span>
+            <span class="goal-rank-time">${entry.goalTime.toFixed(2)}秒</span>
+          </li>`;
+        })
+        .join("");
+    }
+    goalRankingWrapEl?.classList.remove("hidden");
+    goalBannerEl?.classList.remove("hidden");
+  }
+
+  function buildProvisionalRanking(localTime) {
+    const entries = [
+      {
+        id: mp.myId || "me",
+        name: mp.name,
+        color: mp.color,
+        goalTime: localTime,
+      },
+    ];
+    for (const [id, r] of mp.remotes) {
+      if (r.finished && r.goalTime != null) {
+        entries.push({
+          id,
+          name: r.name,
+          color: r.color,
+          goalTime: r.goalTime,
+        });
+      }
+    }
+    entries.sort((a, b) => a.goalTime - b.goalTime);
+    return entries.map((e, i) => ({ ...e, rank: i + 1 }));
   }
 
   function setLobbyStatus(msg, isError) {
@@ -121,6 +247,8 @@
         char: data.char || "あ",
         color: data.color || colorFromId(id),
         target: { x: 0, y: 0, angle: 0, vx: 0, vy: 0, av: 0 },
+        finished: false,
+        goalTime: null,
       };
       mp.remotes.set(id, r);
     }
@@ -133,6 +261,10 @@
     r.target.vx = data.vx ?? r.target.vx;
     r.target.vy = data.vy ?? r.target.vy;
     r.target.av = data.av ?? r.target.av;
+    if (data.finished && data.goalTime != null) {
+      r.finished = true;
+      r.goalTime = data.goalTime;
+    }
 
     pushRemoteToPhysics(id, {
       name: r.name,
@@ -183,11 +315,11 @@
       return;
     }
 
-    const name = (nameInputEl?.value || "").trim() || "プレイヤー";
-    mp.name = name.slice(0, 12);
+    mp.name = (nameInputEl?.value || "").trim().slice(0, 12) || "プレイヤー";
     mp.roomId = roomId.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8) || randomRoomCode();
-    mp.color = REMOTE_COLORS[Math.floor(Math.random() * REMOTE_COLORS.length)];
     mp.mode = "online";
+    mp.rankings = [];
+    hideGoalRanking();
     mp.remotes.clear();
     window.MojiGame?.clearRemotePlayers?.();
 
@@ -238,7 +370,13 @@
         return;
       }
       if (msg.type === "race_start") {
+        mp.rankings = [];
+        hideGoalRanking();
         scheduleRaceStart(msg.startAt);
+        return;
+      }
+      if (msg.type === "ranking") {
+        renderGoalRanking(msg.rankings);
       }
     });
 
@@ -271,6 +409,7 @@
 
   function scheduleRaceStart(startAt) {
     hideLobby();
+    hideGoalRanking();
     const delay = Math.max(0, startAt - Date.now());
     setLobbyStatus("");
     if (mp.raceStartTimer) clearTimeout(mp.raceStartTimer);
@@ -312,7 +451,10 @@
     mp.ws?.close();
     mp.ws = null;
     mp.remotes.clear();
+    mp.rankings = [];
+    hideGoalRanking();
     window.MojiGame?.clearRemotePlayers?.();
+    window.MojiGame?.setPlayerColor?.(mp.color);
     hideLobby();
     updateMpHud();
     window.MojiGame?.startGame();
@@ -363,13 +505,30 @@
     tick();
   }
 
-  function onGoal() {
-    if (mp.mode !== "online" || !mp.ws) return;
-    mp.lastSync = 0;
-    tick();
+  function onGoal(elapsed) {
+    if (mp.mode === "online" && mp.ws?.readyState === WebSocket.OPEN) {
+      mp.ws.send(
+        JSON.stringify({
+          type: "goal",
+          name: mp.name,
+          color: mp.color,
+          goalTime: elapsed,
+        })
+      );
+      mp.lastSync = 0;
+      tick();
+    }
+    renderGoalRanking(buildProvisionalRanking(elapsed));
   }
 
   function onGameStart() {
+    mp.rankings = [];
+    hideGoalRanking();
+    window.MojiGame?.setPlayerColor?.(mp.color);
+    for (const r of mp.remotes.values()) {
+      r.finished = false;
+      r.goalTime = null;
+    }
     if (mp.mode === "online") hydrateRemotesToWorld();
   }
 
@@ -386,6 +545,12 @@
     const params = new URLSearchParams(location.search);
     const room = params.get("room");
     if (room && roomInputEl) roomInputEl.value = room.toUpperCase();
+
+    initColorPicker();
+
+    nameInputEl?.addEventListener("input", () => {
+      if (mp.connected) sendReady();
+    });
 
     btnSolo?.addEventListener("click", beginSolo);
     btnJoin?.addEventListener("click", () => {
@@ -416,6 +581,9 @@
     onCharChange,
     onGoal,
     onGameStart,
+    hideGoalRanking,
+    PLAYER_COLORS,
+    getPlayerColor: () => mp.color,
     get mode() {
       return mp.mode;
     },

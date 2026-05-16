@@ -16,24 +16,42 @@ type PlayerPayload = {
   color: string;
 };
 
+type GoalEntry = {
+  id: string;
+  name: string;
+  color: string;
+  goalTime: number;
+  rank: number;
+};
+
 type ClientMessage =
   | PlayerPayload
   | { type: "ready"; name: string; color: string }
-  | { type: "request_start" };
+  | { type: "request_start" }
+  | { type: "goal"; name: string; color: string; goalTime: number };
 
 type ServerMessage =
   | { type: "welcome"; id: string; room: string }
   | { type: "player"; id: string } & PlayerPayload
   | { type: "leave"; id: string }
-  | { type: "race_start"; startAt: number };
+  | { type: "race_start"; startAt: number }
+  | { type: "ranking"; rankings: GoalEntry[] };
 
 export default class RoomServer implements Party.Server {
   /** 接続ごとの最新状態（再接続時に新規参加者へ送る） */
   players = new Map<string, PlayerPayload & { id: string }>();
   readyIds = new Set<string>();
   raceScheduled = false;
+  finishedIds = new Set<string>();
+  rankings: GoalEntry[] = [];
 
   constructor(readonly room: Party.Room) {}
+
+  resetRace() {
+    this.raceScheduled = false;
+    this.finishedIds.clear();
+    this.rankings = [];
+  }
 
   onConnect(conn: Party.Connection) {
     conn.send(
@@ -86,10 +104,32 @@ export default class RoomServer implements Party.Server {
     if (msg.type === "request_start") {
       const conns = [...this.room.getConnections()];
       if (conns.length < 1 || this.raceScheduled) return;
+      this.resetRace();
       this.raceScheduled = true;
       const startAt = Date.now() + 3000;
       this.room.broadcast(
         JSON.stringify({ type: "race_start", startAt } satisfies ServerMessage)
+      );
+      return;
+    }
+
+    if (msg.type === "goal") {
+      if (this.finishedIds.has(sender.id)) return;
+      this.finishedIds.add(sender.id);
+      const rank = this.rankings.length + 1;
+      const entry: GoalEntry = {
+        id: sender.id,
+        name: msg.name,
+        color: msg.color,
+        goalTime: msg.goalTime,
+        rank,
+      };
+      this.rankings.push(entry);
+      this.room.broadcast(
+        JSON.stringify({
+          type: "ranking",
+          rankings: this.rankings,
+        } satisfies ServerMessage)
       );
       return;
     }
@@ -108,7 +148,7 @@ export default class RoomServer implements Party.Server {
       JSON.stringify({ type: "leave", id: conn.id } satisfies ServerMessage)
     );
     if (this.room.getConnections().size === 0) {
-      this.raceScheduled = false;
+      this.resetRace();
     }
   }
 }

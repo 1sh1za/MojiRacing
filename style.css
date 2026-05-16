@@ -331,10 +331,11 @@ button:active {
 .banner-card {
   background: white;
   border-radius: 24px;
-  padding: 32px 48px;
+  padding: 32px 40px;
   text-align: center;
   box-shadow: 0 24px 64px rgba(0, 0, 0, 0.4);
   animation: pop 0.35s ease both;
+  max-width: min(420px, 92vw);
 }
 
 .banner-emoji {
@@ -354,9 +355,137 @@ button:active {
   margin: 12px 0 20px 0;
 }
 
+.goal-ranking-wrap {
+  margin: 16px 0 20px 0;
+  text-align: left;
+}
+
+.goal-ranking-wrap.hidden {
+  display: none;
+}
+
+.goal-ranking-title {
+  font-size: 14px;
+  font-weight: 800;
+  color: #1e3c72;
+  margin-bottom: 8px;
+  text-align: center;
+}
+
+.goal-ranking-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.goal-rank-row {
+  display: grid;
+  grid-template-columns: 28px 14px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.goal-rank-row:nth-child(1) {
+  background: #fff8e6;
+}
+
+.goal-rank-pos {
+  font-weight: 800;
+  text-align: center;
+  color: #1e3c72;
+}
+
+.goal-rank-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.15);
+}
+
+.goal-rank-name {
+  font-weight: 700;
+  color: #1a1a1a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rank-you {
+  font-weight: 600;
+  color: #64748b;
+  font-size: 11px;
+}
+
+.goal-rank-time {
+  font-weight: 800;
+  color: #1e3c72;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+
 #bannerRestart {
   padding: 12px 32px;
   font-size: 16px;
+}
+
+.color-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.color-swatch {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 50%;
+  border: 3px solid transparent;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+  transition: transform 0.1s ease, border-color 0.15s ease;
+}
+
+.color-swatch:hover {
+  transform: scale(1.08);
+  filter: brightness(1.05);
+}
+
+.color-swatch.selected {
+  border-color: #1e3c72;
+  transform: scale(1.12);
+  box-shadow: 0 0 0 2px #fff, 0 0 0 4px #1e3c72;
+}
+
+.lobby-preview-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 8px;
+  background: #f8fafc;
+  border-radius: 12px;
+  border: 1px dashed #cbd5e1;
+}
+
+#lobbyPreview {
+  width: 88px;
+  height: 88px;
+  flex: 0 0 auto;
+  background: #fff;
+  border-radius: 10px;
+}
+
+.lobby-preview-hint {
+  font-size: 11px;
+  color: #64748b;
+  line-height: 1.45;
+  margin: 0;
 }
 
 @keyframes fadeIn {

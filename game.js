@@ -738,7 +738,7 @@ function getMinimapPlayers() {
     players.push({
       x: state.vehicle.body.position.x,
       name: "あなた",
-      color: "#1e3c72",
+      color: state.playerColor,
       isLocal: true,
     });
   }
@@ -958,12 +958,20 @@ const state = {
   vehicle: null,
   charShape: null,
   charText: "",
+  playerColor: "#e11d48",
   startTime: 0,
   finished: false,
   lastJump: 0,
   goalBody: null,
   startMarkerBody: null,
 };
+
+function setPlayerColor(color) {
+  if (!color) return;
+  state.playerColor = color;
+  updatePreview();
+  updateLobbyPreview();
+}
 
 const speedEl = document.getElementById("speed");
 const statusEl = document.getElementById("status");
@@ -1231,10 +1239,10 @@ function drawStartGoal() {
 }
 
 function drawVehicle(v) {
-  drawCharacterRoller(v.body, state.charShape);
+  drawCharacterRoller(v.body, state.charShape, state.playerColor);
 }
 
-function drawCharacterRoller(body, shape) {
+function drawCharacterRoller(body, shape, fillColor = "#000000") {
   // 接地影（回転と独立に、剛体の真下に楕円で薄く落とす）
   ctx.save();
   ctx.fillStyle = "rgba(0,0,0,0.22)";
@@ -1256,8 +1264,7 @@ function drawCharacterRoller(body, shape) {
   ctx.translate(body.position.x, body.position.y);
   ctx.rotate(body.angle);
 
-  // 文字色は単色で「タイヤ感」のあるオレンジ黄。輪郭は太め。
-  ctx.fillStyle = "#000000";
+  ctx.fillStyle = fillColor;
   ctx.strokeStyle = "#ffffff";
   ctx.lineWidth = 4;
   ctx.lineJoin = "round";
@@ -1566,24 +1573,17 @@ const charInputEl = document.getElementById("charInput");
 const previewEl = document.getElementById("preview");
 const bannerRestart = document.getElementById("bannerRestart");
 
-function updatePreview() {
-  const ch = charInputEl.value.trim();
-  const pctx = previewEl.getContext("2d");
-  pctx.clearRect(0, 0, previewEl.width, previewEl.height);
-  if (!ch) return;
-  if (!isHiragana(ch)) {
-    pctx.fillStyle = "#ef4444";
-    pctx.font = "12px sans-serif";
-    pctx.textAlign = "center";
-    pctx.fillText("ひらがな1文字", previewEl.width / 2, previewEl.height / 2);
-    return;
-  }
-  const shape = getCharacterShape(ch, 90);
+function drawShapePreview(canvas, char, color, size = 90) {
+  if (!canvas) return;
+  const pctx = canvas.getContext("2d");
+  pctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (!char || !isHiragana(char)) return;
+  const shape = getCharacterShape(char, size);
   if (!shape) return;
   pctx.save();
-  pctx.translate(previewEl.width / 2, previewEl.height / 2);
-  pctx.fillStyle = "#ffffff";
-  pctx.strokeStyle = "#1a1a1a";
+  pctx.translate(canvas.width / 2, canvas.height / 2);
+  pctx.fillStyle = color;
+  pctx.strokeStyle = "#ffffff";
   pctx.lineWidth = 2;
   pctx.lineJoin = "round";
   pctx.lineCap = "round";
@@ -1597,11 +1597,28 @@ function updatePreview() {
     pctx.fill();
     pctx.stroke();
   }
-  pctx.fillStyle = "#1a1a1a";
-  pctx.beginPath();
-  pctx.arc(0, 0, 3, 0, Math.PI * 2);
-  pctx.fill();
   pctx.restore();
+}
+
+function updatePreview() {
+  const ch = charInputEl.value.trim() || "あ";
+  if (!isHiragana(ch)) {
+    const pctx = previewEl.getContext("2d");
+    pctx.clearRect(0, 0, previewEl.width, previewEl.height);
+    pctx.fillStyle = "#ef4444";
+    pctx.font = "12px sans-serif";
+    pctx.textAlign = "center";
+    pctx.fillText("ひらがな1文字", previewEl.width / 2, previewEl.height / 2);
+    return;
+  }
+  drawShapePreview(previewEl, ch, state.playerColor, 90);
+}
+
+const lobbyPreviewEl = document.getElementById("lobbyPreview");
+
+function updateLobbyPreview() {
+  const ch = charInputEl?.value?.trim() || "あ";
+  drawShapePreview(lobbyPreviewEl, ch, state.playerColor, 72);
 }
 
 // IME 入力中フラグ（音声経由の handleCharInput では未使用だが互換のため残す）
@@ -1923,6 +1940,7 @@ window.addEventListener("keydown", (e) => {
   }
 });
 bannerRestart.addEventListener("click", () => {
+  window.MojiMP?.hideGoalRanking?.();
   goalBanner.classList.add("hidden");
   startGame();
 });
@@ -1999,8 +2017,6 @@ function checkGoal() {
   if (state.vehicle.body.position.x >= GOAL_X) {
     state.finished = true;
     const elapsed = (performance.now() - state.startTime) / 1000;
-    goalTimeEl.textContent = elapsed.toFixed(2);
-    goalBanner.classList.remove("hidden");
     window.MojiMP?.onGoal?.(elapsed);
   }
   // 落下リカバリー: y がワールド外まで落ちたら自動リセット
@@ -2124,16 +2140,21 @@ window.MojiGame = {
   WORLD_WIDTH,
   getCharacterShape,
   drawCharacterRoller,
+  drawShapePreview,
   isHiragana,
   startGame,
   restart,
+  setPlayerColor,
+  getPlayerColor: () => state.playerColor,
   getState: () => state,
   ensureRemotePlayer,
   removeRemotePlayer,
   clearRemotePlayers,
   getMinimapPlayers,
+  updateLobbyPreview,
 };
 
 // 初期表示（ゲーム開始はロビーまたは「ひとりでプレイ」から）
 updatePreview();
+updateLobbyPreview();
 requestAnimationFrame(loop);
