@@ -1,0 +1,4 @@
+node_modules/
+.partykit/
+dist/
+.DS_Store

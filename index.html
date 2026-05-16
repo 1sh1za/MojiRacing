@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>もじレーシング - MojiRacing</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div id="lobby" class="lobby">
+      <div class="lobby-card">
+        <h1 class="lobby-title">もじレーシング</h1>
+        <p class="lobby-lead">友達と同じルームでゴールを競おう</p>
+
+        <label class="label" for="playerName">ニックネーム</label>
+        <input
+          id="playerName"
+          type="text"
+          maxlength="12"
+          value="プレイヤー"
+          autocomplete="nickname"
+        />
+
+        <label class="label" for="roomCode">ルームコード</label>
+        <div class="lobby-row">
+          <input id="roomCode" type="text" maxlength="8" placeholder="ABC12" autocomplete="off" />
+          <button type="button" id="btnCopyLink" class="btn-secondary">リンク</button>
+        </div>
+
+        <p id="lobbyStatus" class="lobby-status" aria-live="polite"></p>
+        <ul id="playerList" class="player-list"></ul>
+
+        <div class="lobby-actions">
+          <button type="button" id="btnJoin">ルームに参加</button>
+          <button type="button" id="btnStartRace" class="btn-accent" disabled>レース開始</button>
+        </div>
+        <button type="button" id="btnSolo" class="btn-ghost">ひとりでプレイ</button>
+      </div>
+    </div>
+
+    <div id="countdown" class="countdown hidden" aria-live="assertive"></div>
+    <div id="mpHud" class="mp-hud hidden" aria-live="polite"></div>
+
+    <canvas id="game"></canvas>
+
+    <div id="ui">
+      <div class="row">
+        <div class="input-col">
+          <label for="charInput" class="label">現在のタイヤ（音声で切り替え）</label>
+          <input
+            id="charInput"
+            type="text"
+            value="あ"
+            readonly
+            tabindex="-1"
+            autocomplete="off"
+            autocorrect="off"
+            autocapitalize="off"
+            spellcheck="false"
+            inputmode="none"
+            aria-readonly="true"
+          />
+          <div class="focus-hint" id="focusHint">V で音声入力</div>
+        </div>
+        <canvas id="preview" width="120" height="120"></canvas>
+      </div>
+
+      <div id="voiceState" class="voice-state off" aria-live="polite">
+        音声入力: オフ（<kbd>V</kbd> で切替）
+      </div>
+
+      <div id="terrainInfo">
+        <div class="terrain-row">
+          <span class="terrain-chip" id="terrainChip">PLAIN</span>
+          <span class="terrain-name" id="terrainName">平野</span>
+          <span class="terrain-affinity" id="terrainAffinity">相性: ★★★</span>
+        </div>
+        <div class="terrain-hint" id="terrainHint">
+          地形によって得意な形が変わります。タイヤを切り替えてみよう。
+        </div>
+      </div>
+
+      <div id="status"></div>
+      <div id="micStatus" class="mic-status"></div>
+    </div>
+
+    <img id="logoImg" src="UI/logo.png" alt="もじレーシング" />
+
+    <div id="bottomRight">
+      <div id="speedDisplay">
+        <img src="UI/speed.png" alt="速度" />
+        <div class="speed-number"><span id="speed">0</span></div>
+      </div>
+      <img id="controlsImg" src="UI/sousa.png" alt="操作説明" />
+    </div>
+
+    <div id="goalBanner" class="hidden">
+      <div class="banner-card">
+        <div class="banner-emoji">🏁</div>
+        <div class="banner-title">ゴール！</div>
+        <div class="banner-time">タイム: <span id="goalTime">0.00</span> 秒</div>
+        <button id="bannerRestart">もう一度</button>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/poly-decomp@0.3.0/build/decomp.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/matter-js@0.19.0/build/matter.min.js"></script>
+    <script src="config.js"></script>
+    <script src="game.js"></script>
+    <script src="multiplayer.js"></script>
+  </body>
+</html>

@@ -1,0 +1,15 @@
+{
+  "name": "mojiracing",
+  "private": true,
+  "scripts": {
+    "dev": "partykit dev",
+    "dev:web": "npx serve . -p 8080",
+    "build": "node scripts/write-config.js",
+    "deploy:party": "partykit deploy",
+    "test:ms": "node test-ms.mjs"
+  },
+  "devDependencies": {
+    "partykit": "^0.0.115",
+    "typescript": "^5.7.0"
+  }
+}
